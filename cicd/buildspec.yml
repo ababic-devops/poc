@@ -1,0 +1,41 @@
+version: 0.2
+
+env:
+  variables:
+    # Injected by the app version — override via CodeBuild environment variable
+    APP_VERSION: "1.0.0"
+    IMAGE_REPO_NAME: "poc-nginx"
+    AWS_REGION: ""  # defined as CodeBuild environment variables, not here
+    AWS_ECR_ACCOUNT_ID: "" # defined as CodeBuild environment variables, not here
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      # Authenticate Docker to ECR using short-lived token
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      # Use the first 8 chars of the commit SHA as the image tag for traceability
+      - IMAGE_TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION:0:8}
+      - ECR_REPO=$AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME
+
+  build:
+    commands:
+      - echo Building Docker image...
+      # Pass APP_VERSION as a build arg so it gets embedded in the nginx HTML at container startup
+      - docker build --build-arg APP_VERSION=$APP_VERSION -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+      # Tag with both commit SHA (immutable) and latest (mutable, for ECS rolling deploys)
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $ECR_REPO:latest
+
+  post_build:
+    commands:
+      - echo Pushing image to ECR...
+      - docker push $ECR_REPO:$IMAGE_TAG
+      - docker push $ECR_REPO:latest
+      # imagedefinitions.json tells ECS which container image to deploy
+      - printf '[{"name":"poc-nginx","imageUri":"%s"}]' $ECR_REPO:$IMAGE_TAG > imagedefinitions.json
+
+artifacts:
+  files:
+    # Passed to the ECS deploy action in the pipeline
+    - imagedefinitions.json

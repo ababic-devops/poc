@@ -1,4 +1,6 @@
-FROM nginx:alpine
+#FROM nginx:alpine
+FROM 114750942609.dkr.ecr.us-west-2.amazonaws.com/docker-hub/library/nginx:alpine # Pull through cache - infra-share AWS account
+ 
 
 # App version — override at build time with: docker build --build-arg APP_VERSION=1.2.3
 ARG APP_VERSION=1.0.0

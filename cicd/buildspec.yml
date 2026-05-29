@@ -36,7 +36,7 @@ phases:
       - docker push $ECR_REPO:$IMAGE_TAG
       - docker push $ECR_REPO:latest
       # imagedefinitions.json tells ECS which container image to deploy
-      - printf '[{"name":"$APP_NAME","imageUri":"%s"}]' $ECR_REPO:$IMAGE_TAG > imagedefinitions.json
+      - printf '[{"name":"$APP_ECS_SERVICE_NAME","imageUri":"%s"}]' $ECR_REPO:$IMAGE_TAG > imagedefinitions.json
 
 artifacts:
   files:

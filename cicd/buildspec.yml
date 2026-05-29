@@ -5,7 +5,9 @@ env:
   variables:
     # Injected by the app version — override via CodeBuild environment variable
     APP_VERSION: "1.0.0"
-    IMAGE_REPO_NAME: "poc-nginx"
+    APP_NAME: ""
+    APP_ECS_SERVICE_NAME: ""
+    IMAGE_REPO_NAME: ""
     AWS_REGION: ""  # defined as CodeBuild environment variables, not here
     AWS_ECR_ACCOUNT_ID: "" # defined as CodeBuild environment variables, not here
 
@@ -34,7 +36,7 @@ phases:
       - docker push $ECR_REPO:$IMAGE_TAG
       - docker push $ECR_REPO:latest
       # imagedefinitions.json tells ECS which container image to deploy
-      - printf '[{"name":"poc-nginx","imageUri":"%s"}]' $ECR_REPO:$IMAGE_TAG > imagedefinitions.json
+      - printf '[{"name":"$APP_NAME","imageUri":"%s"}]' $ECR_REPO:$IMAGE_TAG > imagedefinitions.json
 
 artifacts:
   files:

@@ -25,6 +25,9 @@ phases:
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
       - COMMIT_SHA=${CODEBUILD_RESOLVED_SOURCE_VERSION:0:8}
       - ECR_REPO=$AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - git config user.email "codebuild@certificial.com"
+      - git config user.name "CodeBuild"
+      - git remote set-url origin https://x-access-token:$GITHUB_TOKEN@github.com/$GITHUB_REPO.git
       - npx semantic-release
       - VERSION=$(git tag --points-at HEAD | grep '^v' | head -1)
 

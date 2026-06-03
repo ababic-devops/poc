@@ -6,6 +6,7 @@ FROM 114750942609.dkr.ecr.us-west-2.amazonaws.com/docker-hub/library/nginx:alpin
 ARG APP_VERSION=1.0.0
 ENV APP_VERSION=${APP_VERSION}
 ENV TEST_ENV=dev
+ENV TEST_ENV2=dev2
 
 COPY index.html /usr/share/nginx/html/index.html
 COPY docker-entrypoint.sh /docker-entrypoint.sh

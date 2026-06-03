@@ -18,7 +18,7 @@ phases:
     runtime-versions:
       nodejs: 20
     commands:
-      - npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+      - npm install -g semantic-release @semantic-release/commit-analyzer @semantic-release/release-notes-generator @semantic-release/github
 
   pre_build:
     commands:

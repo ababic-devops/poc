@@ -9,9 +9,9 @@ env:
     IMAGE_REPO_NAME: ""
     AWS_REGION: ""
     AWS_ECR_ACCOUNT_ID: ""
-  secrets-manager:
+  parameter-store:
     # GitHub PAT with repo scope — required by semantic-release to push git tags and create releases
-    GITHUB_TOKEN: "cert/shared/github-token"
+    GITHUB_TOKEN: "/cert/shared/github/token"
 
 phases:
   install:

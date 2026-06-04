@@ -98,14 +98,14 @@ jobs:
 
       - name: Render new task definition
         id: task-def
-        uses: aws-actions/amazon-ecs-render-task-def@v1
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-def.json
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.retag.outputs.image_uri }}
 
       - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-def@v1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: cert-${{ inputs.environment }}-poc

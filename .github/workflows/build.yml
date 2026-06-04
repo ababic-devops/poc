@@ -1,0 +1,110 @@
+# Mirrors the dev CodePipeline: triggered on every merge to main.
+# Runs semantic-release to cut a version tag, builds and pushes the Docker
+# image to shared-infra ECR, then deploys to the dev ECS service.
+#
+# Prerequisites (set once in repo settings):
+#   Secrets : GH_PAT                 — GitHub PAT with repo scope (for semantic-release)
+#   Variables: AWS_OIDC_ROLE_ARN_DEV — IAM role ARN in dev account (674874788099) with
+#                                      OIDC trust for this repo and permissions to push
+#                                      to shared-infra ECR (114750942609) and update
+#                                      the dev ECS service.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write      # OIDC token for AWS
+  contents: write      # semantic-release pushes git tags
+  issues: write        # @semantic-release/github creates releases
+  pull-requests: write
+
+env:
+  AWS_REGION:     us-west-2
+  ECR_ACCOUNT_ID: "114750942609"
+  ECR_REPO_NAME:  cert-shared-infra-ecr-poc
+  ECS_CLUSTER:    cert-dev-cluster
+  ECS_SERVICE:    cert-dev-poc
+  CONTAINER_NAME: poc
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin \
+            $ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      - name: Run semantic-release
+        id: semrel
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          git config user.email "github-actions@certificial.com"
+          git config user.name "GitHub Actions"
+          npm install -g semantic-release \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator \
+            @semantic-release/github
+          npx semantic-release
+          VERSION=$(git tag --points-at HEAD | grep '^v' | head -1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push image
+        id: image
+        run: |
+          ECR_BASE=$ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+          VERSION="${{ steps.semrel.outputs.version }}"
+          COMMIT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+
+          if [ -z "$VERSION" ]; then
+            echo "No releasable commits — skipping Docker build"
+            IMAGE_URI=$ECR_BASE/$ECR_REPO_NAME:dev
+          else
+            PRERELEASE_NUM=$(git tag --sort=-version:refname | grep "^$VERSION-dev\." | head -1 | sed "s/^$VERSION-dev\.//" || true)
+            IMAGE_TAG=$VERSION-dev.$PRERELEASE_NUM-$COMMIT_SHA
+            docker build -t $ECR_BASE/$ECR_REPO_NAME:$IMAGE_TAG .
+            docker tag $ECR_BASE/$ECR_REPO_NAME:$IMAGE_TAG $ECR_BASE/$ECR_REPO_NAME:dev
+            docker push $ECR_BASE/$ECR_REPO_NAME:$IMAGE_TAG
+            docker push $ECR_BASE/$ECR_REPO_NAME:dev
+            IMAGE_URI=$ECR_BASE/$ECR_REPO_NAME:$IMAGE_TAG
+          fi
+
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition $ECS_SERVICE \
+            --query taskDefinition > task-def.json
+
+      - name: Render new task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-def@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.image_uri }}
+
+      - name: Deploy to dev ECS
+        uses: aws-actions/amazon-ecs-deploy-task-def@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true

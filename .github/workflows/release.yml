@@ -1,0 +1,113 @@
+# Mirrors the qa/uat/prd CodePipeline: manually triggered from the Actions tab.
+# Promotes an existing dev ECR image to the target environment by retagging it
+# (no rebuild), then deploys to that environment's ECS service.
+#
+# The GitHub environment gate (qa / uat / prd) replaces the CodePipeline Approve
+# stage — configure required reviewers in repo Settings → Environments.
+#
+# Prerequisites (set once per environment in repo Settings → Environments):
+#   Variables: AWS_OIDC_ROLE_ARN — IAM role ARN in the target account with OIDC
+#                                   trust for this repo and permissions to retag
+#                                   shared-infra ECR images (114750942609) and
+#                                   update the target ECS service.
+#   Accounts  : qa  203677518357 / uat  985465459629 / prd  530352103137
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: "ECR image tag to promote (e.g. v0.1.0-dev.1-a1b2c3d)"
+        required: true
+        type: string
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [qa, uat, prd]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION:     us-west-2
+  ECR_ACCOUNT_ID: "114750942609"
+  ECR_REPO_NAME:  cert-shared-infra-ecr-poc
+  CONTAINER_NAME: poc
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin \
+            $ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      - name: Retag image
+        id: retag
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          ENV: ${{ inputs.environment }}
+        run: |
+          ECR_BASE=$ECR_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+          VERSION=$(echo $SOURCE_TAG | cut -d'-' -f1)
+          PRERELEASE_NUM=$(echo $SOURCE_TAG | grep -oP '(?<=\.(dev|qa|uat)\.)\d+' || echo "1")
+          COMMIT_SHA=$(echo $SOURCE_TAG | rev | cut -d'-' -f1 | rev)
+
+          if [ "$ENV" = "prd" ]; then
+            TARGET_TAG=$VERSION
+          else
+            TARGET_TAG=$VERSION-$ENV.$PRERELEASE_NUM-$COMMIT_SHA
+          fi
+
+          MANIFEST=$(aws ecr batch-get-image \
+            --registry-id $ECR_ACCOUNT_ID \
+            --repository-name $ECR_REPO_NAME \
+            --image-ids imageTag=$SOURCE_TAG \
+            --query 'images[0].imageManifest' \
+            --output text)
+          aws ecr put-image \
+            --registry-id $ECR_ACCOUNT_ID \
+            --repository-name $ECR_REPO_NAME \
+            --image-tag $TARGET_TAG \
+            --image-manifest "$MANIFEST"
+          aws ecr put-image \
+            --registry-id $ECR_ACCOUNT_ID \
+            --repository-name $ECR_REPO_NAME \
+            --image-tag $ENV \
+            --image-manifest "$MANIFEST"
+
+          echo "image_uri=$ECR_BASE/$ECR_REPO_NAME:$TARGET_TAG" >> $GITHUB_OUTPUT
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition cert-${{ inputs.environment }}-poc \
+            --query taskDefinition > task-def.json
+
+      - name: Render new task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-def@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.retag.outputs.image_uri }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-def@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: cert-${{ inputs.environment }}-poc
+          cluster: cert-${{ inputs.environment }}-cluster
+          wait-for-service-stability: true

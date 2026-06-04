@@ -55,6 +55,8 @@ jobs:
         run: |
           git config user.email "github-actions@certificial.com"
           git config user.name "GitHub Actions"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git fetch --all
           npm install -g semantic-release \
             @semantic-release/commit-analyzer \
             @semantic-release/release-notes-generator \

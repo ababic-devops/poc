@@ -1,8 +1,32 @@
 {
-  "branches": ["main"],
+  "branches": [
+    { "name": "release/*" },
+    { "name": "main", "prerelease": "dev", "channel": "dev" }
+  ],
+  "tagFormat": "v${version}",
   "plugins": [
-    "@semantic-release/commit-analyzer",
-    "@semantic-release/release-notes-generator",
+    ["@semantic-release/commit-analyzer", {
+      "preset": "angular",
+      "releaseRules": [
+        { "type": "feat",     "release": "minor" },
+        { "type": "fix",      "release": "patch" },
+        { "type": "perf",     "release": "patch" },
+        { "type": "revert",   "release": "patch" },
+        { "breaking": true,   "release": "major" }
+      ],
+      "parserOpts": {
+        "noteKeywords": ["BREAKING CHANGE", "BREAKING CHANGES"]
+      }
+    }],
+    ["@semantic-release/release-notes-generator", {
+      "preset": "angular",
+      "parserOpts": {
+        "noteKeywords": ["BREAKING CHANGE", "BREAKING CHANGES"]
+      },
+      "writerOpts": {
+        "commitsSort": ["subject", "scope"]
+      }
+    }],
     "@semantic-release/github"
   ]
 }

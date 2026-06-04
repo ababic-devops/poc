@@ -37,7 +37,8 @@ phases:
         if [ -z "$VERSION" ]; then
           echo "No releasable commits — skipping docker build."
         else
-          IMAGE_TAG=$VERSION-$ENV-$COMMIT_SHA
+          PRERELEASE_NUM=$(git tag --sort=-version:refname | grep "^$VERSION-dev\." | head -1 | sed "s/^$VERSION-dev\.//")
+          IMAGE_TAG=$VERSION-dev.$PRERELEASE_NUM-$COMMIT_SHA
           echo "Building $IMAGE_TAG"
           docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG $DOCKER_BUILD_DIR
           docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
@@ -50,7 +51,8 @@ phases:
         if [ -z "$VERSION" ]; then
           printf '[{"name":"%s","imageUri":"%s:%s"}]' "$APP_NAME" "$ECR_REPO" "$ENV" > imagedefinitions.json
         else
-          IMAGE_TAG=$VERSION-$ENV-$COMMIT_SHA
+          PRERELEASE_NUM=$(git tag --sort=-version:refname | grep "^$VERSION-dev\." | head -1 | sed "s/^$VERSION-dev\.//")
+          IMAGE_TAG=$VERSION-dev.$PRERELEASE_NUM-$COMMIT_SHA
           docker push $ECR_REPO:$IMAGE_TAG
           docker push $ECR_REPO:$ENV
           printf '[{"name":"%s","imageUri":"%s:%s"}]' "$APP_NAME" "$ECR_REPO" "$IMAGE_TAG" > imagedefinitions.json

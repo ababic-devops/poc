@@ -1,5 +1,6 @@
 {
   "name": "example",
   "version": "1.0.0",
-  "description": "A simple JSON file"
+  "description": "A simple JSON file",
+  "$schema": "test"
 }

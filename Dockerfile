@@ -8,6 +8,7 @@ ENV APP_VERSION=${APP_VERSION}
 ENV TEST_ENV=dev
 ENV TEST_ENV2=dev2
 ENV TEST_ENV3=dev3
+ENV TEST_ENV4=dev4
 
 COPY index.html /usr/share/nginx/html/index.html
 COPY docker-entrypoint.sh /docker-entrypoint.sh

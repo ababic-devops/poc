@@ -1,0 +1,205 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: 'ECR image tag to deploy (e.g. v1.2.0 or main-abc1234)'
+        required: true
+      dev:
+        description: 'Rollback DEV'
+        type: boolean
+        default: false
+      qa:
+        description: 'Rollback QA'
+        type: boolean
+        default: false
+      uat:
+        description: 'Rollback UAT'
+        type: boolean
+        default: false
+      prd:
+        description: 'Rollback PRD'
+        type: boolean
+        default: false
+
+jobs:
+  verify:
+    name: Verify image exists in ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify image tag
+        env:
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          aws ecr describe-images \
+            --repository-name $REPOSITORY \
+            --image-ids imageTag=$IMAGE_TAG \
+            --query 'imageDetails[0].imageTags' \
+            --output text || {
+            echo "ERROR: image tag '$IMAGE_TAG' not found in ECR"
+            exit 1
+          }
+          echo "Verified: $IMAGE_TAG exists in ECR"
+
+  rollback-dev:
+    name: Rollback DEV → ${{ inputs.image-tag }}
+    needs: verify
+    if: inputs.dev == true
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          echo "Rolling back DEV to $IMAGE_TAG..."
+          # TODO: replace with your deployment command
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update deployments.json
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          jq --arg tag "$IMAGE_TAG" '.dev = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deployments.json
+          git diff --staged --quiet || (git commit -m "chore: rollback dev to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)
+
+  rollback-qa:
+    name: Rollback QA → ${{ inputs.image-tag }}
+    needs: verify
+    if: inputs.qa == true
+    runs-on: ubuntu-latest
+    environment: qa  # manual approval
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          echo "Rolling back QA to $IMAGE_TAG..."
+          # TODO: replace with your deployment command
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update deployments.json
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          jq --arg tag "$IMAGE_TAG" '.qa = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deployments.json
+          git diff --staged --quiet || (git commit -m "chore: rollback qa to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)
+
+  rollback-uat:
+    name: Rollback UAT → ${{ inputs.image-tag }}
+    needs: verify
+    if: inputs.uat == true
+    runs-on: ubuntu-latest
+    environment: uat
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          echo "Rolling back UAT to $IMAGE_TAG..."
+          # TODO: replace with your deployment command
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update deployments.json
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          jq --arg tag "$IMAGE_TAG" '.uat = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deployments.json
+          git diff --staged --quiet || (git commit -m "chore: rollback uat to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)
+
+  rollback-prd:
+    name: Rollback PRD → ${{ inputs.image-tag }}
+    needs: [verify, rollback-uat]  # uat must complete before prd can start
+    if: |
+      always() &&
+      inputs.prd == true &&
+      (needs.verify.result == 'success') &&
+      (needs.rollback-uat.result == 'success' || needs.rollback-uat.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: prd  # manual approval
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          echo "Rolling back PRD to $IMAGE_TAG..."
+          # TODO: replace with your deployment command
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update deployments.json
+        env:
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          jq --arg tag "$IMAGE_TAG" '.prd = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deployments.json
+          git diff --staged --quiet || (git commit -m "chore: rollback prd to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)

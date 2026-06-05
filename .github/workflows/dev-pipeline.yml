@@ -1,0 +1,113 @@
+name: Development and Testing Pipeline
+
+on:
+  push:
+    branches: [main]
+    # GitHub natively skips this workflow when the commit message contains [skip ci]
+    # semantic-release commits include [skip ci] to prevent looping
+
+jobs:
+  build:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=main-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+        run: |
+          docker build -t $IMAGE .
+          docker push $IMAGE
+
+  deploy-dev:
+    name: Deploy to DEV
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+        run: |
+          echo "Deploying to DEV environment..."
+          # TODO: replace with your deployment command
+          # e.g. aws ecs update-service --cluster dev --service my-app --force-new-deployment
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update deployments.json
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+        run: |
+          jq --arg tag "$IMAGE_TAG" '.dev = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deployments.json
+          git diff --staged --quiet || (git commit -m "chore: update dev to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)
+
+  deploy-qa:
+    name: Deploy to QA
+    needs: [build, deploy-dev]
+    runs-on: ubuntu-latest
+    environment: qa  # manual approval configured in GitHub Environments
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+        run: |
+          echo "Deploying to QA environment..."
+          # TODO: replace with your deployment command
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update deployments.json
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+        run: |
+          jq --arg tag "$IMAGE_TAG" '.qa = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deployments.json
+          git diff --staged --quiet || (git commit -m "chore: update qa to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)

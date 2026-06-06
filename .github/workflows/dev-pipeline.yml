@@ -59,36 +59,24 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEV_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy
-        env:
-          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
-          CLUSTER: cert-dev-cluster
-          TASK_FAMILY: cert-dev-${{ env.SERVICE_NAME }}
-          SERVICE: cert-dev-${{ env.SERVICE_NAME }}
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
-
-          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
-          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
-            --arg img "$IMAGE_URI" \
-            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
-          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
-          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+      - name: Deploy to ECS
+        uses: certificial/github-actions/ecs-deploy@main
+        with:
+          image-tag: ${{ needs.build.outputs.image-tag }}
+          cluster: cert-dev-cluster
+          task-family: cert-dev-${{ env.SERVICE_NAME }}
+          service: cert-dev-${{ env.SERVICE_NAME }}
+          service-name: ${{ env.SERVICE_NAME }}
 
       - uses: actions/checkout@v6
         with:
           ref: main
 
       - name: Update deployments.json
-        env:
-          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
-        run: |
-          jq --arg tag "$IMAGE_TAG" '.dev = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add deployments.json
-          git diff --staged --quiet || (git commit -m "chore: update dev to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)
+        uses: certificial/github-actions/update-deployments@main
+        with:
+          image-tag: ${{ needs.build.outputs.image-tag }}
+          environment: dev
 
   deploy-qa:
     name: Deploy to QA
@@ -105,33 +93,21 @@ jobs:
           role-to-assume: ${{ vars.AWS_QA_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy
-        env:
-          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
-          CLUSTER: cert-qa-cluster
-          TASK_FAMILY: cert-qa-${{ env.SERVICE_NAME }}
-          SERVICE: cert-qa-${{ env.SERVICE_NAME }}
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
-
-          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
-          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
-            --arg img "$IMAGE_URI" \
-            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
-          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
-          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+      - name: Deploy to ECS
+        uses: certificial/github-actions/ecs-deploy@main
+        with:
+          image-tag: ${{ needs.build.outputs.image-tag }}
+          cluster: cert-qa-cluster
+          task-family: cert-qa-${{ env.SERVICE_NAME }}
+          service: cert-qa-${{ env.SERVICE_NAME }}
+          service-name: ${{ env.SERVICE_NAME }}
 
       - uses: actions/checkout@v6
         with:
           ref: main
 
       - name: Update deployments.json
-        env:
-          IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
-        run: |
-          jq --arg tag "$IMAGE_TAG" '.qa = $tag' deployments.json > tmp.json && mv tmp.json deployments.json
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add deployments.json
-          git diff --staged --quiet || (git commit -m "chore: update qa to $IMAGE_TAG [skip ci]" && git pull --rebase origin main && git push)
+        uses: certificial/github-actions/update-deployments@main
+        with:
+          image-tag: ${{ needs.build.outputs.image-tag }}
+          environment: qa

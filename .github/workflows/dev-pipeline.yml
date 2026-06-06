@@ -1,5 +1,10 @@
 name: Development and Testing Pipeline
 
+env:
+  SERVICE_NAME: poc
+  AWS_REGION: us-west-2
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main]
@@ -16,13 +21,13 @@ jobs:
     outputs:
       image-tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_SHARED_INFRA_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         id: login-ecr
@@ -34,7 +39,7 @@ jobs:
 
       - name: Build and push
         env:
-          IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+          IMAGE: ${{ steps.login-ecr.outputs.registry }}/cert-shared-infra-ecr-${{ env.SERVICE_NAME }}:${{ steps.meta.outputs.tag }}
         run: |
           docker build -t $IMAGE .
           docker push $IMAGE
@@ -49,20 +54,29 @@ jobs:
       contents: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_DEV_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+          CLUSTER: cert-dev-cluster
+          TASK_FAMILY: cert-dev-${{ env.SERVICE_NAME }}
+          SERVICE: cert-dev-${{ env.SERVICE_NAME }}
         run: |
-          echo "Deploying to DEV environment..."
-          # TODO: replace with your deployment command
-          # e.g. aws ecs update-service --cluster dev --service my-app --force-new-deployment
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 
@@ -86,19 +100,29 @@ jobs:
       contents: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_QA_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
+          CLUSTER: cert-qa-cluster
+          TASK_FAMILY: cert-qa-${{ env.SERVICE_NAME }}
+          SERVICE: cert-qa-${{ env.SERVICE_NAME }}
         run: |
-          echo "Deploying to QA environment..."
-          # TODO: replace with your deployment command
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 

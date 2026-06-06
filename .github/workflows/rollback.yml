@@ -1,5 +1,10 @@
 name: Rollback
 
+env:
+  SERVICE_NAME: poc
+  AWS_REGION: us-west-2
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   workflow_dispatch:
     inputs:
@@ -32,14 +37,14 @@ jobs:
       contents: read
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_SHARED_INFRA_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify image tag
         env:
-          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          REPOSITORY: cert-shared-infra-ecr-${{ env.SERVICE_NAME }}
           IMAGE_TAG: ${{ inputs.image-tag }}
         run: |
           aws ecr describe-images \
@@ -63,19 +68,29 @@ jobs:
       contents: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_DEV_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           IMAGE_TAG: ${{ inputs.image-tag }}
+          CLUSTER: cert-dev-cluster
+          TASK_FAMILY: cert-dev-${{ env.SERVICE_NAME }}
+          SERVICE: cert-dev-${{ env.SERVICE_NAME }}
         run: |
-          echo "Rolling back DEV to $IMAGE_TAG..."
-          # TODO: replace with your deployment command
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 
@@ -100,19 +115,29 @@ jobs:
       contents: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_QA_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           IMAGE_TAG: ${{ inputs.image-tag }}
+          CLUSTER: cert-qa-cluster
+          TASK_FAMILY: cert-qa-${{ env.SERVICE_NAME }}
+          SERVICE: cert-qa-${{ env.SERVICE_NAME }}
         run: |
-          echo "Rolling back QA to $IMAGE_TAG..."
-          # TODO: replace with your deployment command
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 
@@ -137,19 +162,29 @@ jobs:
       contents: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_UAT_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           IMAGE_TAG: ${{ inputs.image-tag }}
+          CLUSTER: cert-uat-cluster
+          TASK_FAMILY: cert-uat-${{ env.SERVICE_NAME }}
+          SERVICE: cert-uat-${{ env.SERVICE_NAME }}
         run: |
-          echo "Rolling back UAT to $IMAGE_TAG..."
-          # TODO: replace with your deployment command
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 
@@ -178,19 +213,29 @@ jobs:
       contents: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_PRD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           IMAGE_TAG: ${{ inputs.image-tag }}
+          CLUSTER: cert-prd-cluster
+          TASK_FAMILY: cert-prd-${{ env.SERVICE_NAME }}
+          SERVICE: cert-prd-${{ env.SERVICE_NAME }}
         run: |
-          echo "Rolling back PRD to $IMAGE_TAG..."
-          # TODO: replace with your deployment command
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${IMAGE_TAG}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 

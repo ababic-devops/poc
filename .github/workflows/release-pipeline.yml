@@ -1,5 +1,10 @@
 name: Release Pipeline
 
+env:
+  SERVICE_NAME: poc
+  AWS_REGION: us-west-2
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   workflow_dispatch:
     inputs:
@@ -21,7 +26,7 @@ jobs:
       version: ${{ steps.semantic.outputs.new_release_version }}
       released: ${{ steps.semantic.outputs.new_release_published }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -46,10 +51,10 @@ jobs:
       contents: read
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_SHARED_INFRA_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         id: login-ecr
@@ -58,7 +63,7 @@ jobs:
       - name: Resolve source image tag
         id: source
         env:
-          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          REPOSITORY: cert-shared-infra-ecr-${{ env.SERVICE_NAME }}
         run: |
           if [ -n "${{ inputs.image-sha }}" ]; then
             SOURCE_TAG="main-${{ inputs.image-sha }}"
@@ -81,7 +86,7 @@ jobs:
 
       - name: Re-tag image in ECR
         env:
-          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          REPOSITORY: cert-shared-infra-ecr-${{ env.SERVICE_NAME }}
           SOURCE_TAG: ${{ steps.source.outputs.tag }}
           TARGET_TAG: v${{ needs.release.outputs.version }}
         run: |
@@ -118,21 +123,30 @@ jobs:
       id-token: write
       contents: write
     steps:
-      # - name: Configure AWS credentials
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-      #     aws-region: ${{ vars.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_UAT_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           VERSION: v${{ needs.release.outputs.version }}
+          CLUSTER: cert-uat-cluster
+          TASK_FAMILY: cert-uat-${{ env.SERVICE_NAME }}
+          SERVICE: cert-uat-${{ env.SERVICE_NAME }}
         run: |
-          echo "Deploying to UAT environment..."
-          # TODO: replace with your deployment command
-          # e.g. aws ecs update-service --cluster uat --service my-app --force-new-deployment
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${VERSION}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 
@@ -155,20 +169,30 @@ jobs:
       id-token: write
       contents: write
     steps:
-      # - name: Configure AWS credentials
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
-      #     aws-region: ${{ vars.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PRD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy
         env:
           VERSION: v${{ needs.release.outputs.version }}
+          CLUSTER: cert-prd-cluster
+          TASK_FAMILY: cert-prd-${{ env.SERVICE_NAME }}
+          SERVICE: cert-prd-${{ env.SERVICE_NAME }}
         run: |
-          echo "Deploying to PRD environment..."
-          # TODO: replace with your deployment command
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/cert-shared-infra-ecr-${SERVICE_NAME}:${VERSION}"
 
-      - uses: actions/checkout@v4
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition)
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg img "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $img')
+          NEW_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE --task-definition $NEW_REVISION --force-new-deployment
+
+      - uses: actions/checkout@v6
         with:
           ref: main
 
